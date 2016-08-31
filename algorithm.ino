@@ -10,7 +10,7 @@
 */
 
 const int AVERAGEINTERVAL = 4; //how many EMG samples to average over
-const int A_MAX = 835;   //maximum of angle sensor
+const int A_MAX = 855;   //maximum of angle sensor
 const int A_MIN = 250;  //minimum, should be less by ~585
 const int athr = 30;  //when it starts restricting torque
 static int mai = 0;  //moving average iterator
@@ -20,7 +20,7 @@ static float bScale = 1;
 static float tScale = 1;
 static int tFloating = 0;
 static int bFloating = 0;
-static int forceIntegral = 0;  //for PID controller
+static float forceIntegral = 0;  //for PID controller
 static int prevError = 0;  //for PID controller
 static bool PIDmode = 0;   //1 if PID is active
 
@@ -37,11 +37,28 @@ const int forcePin2 = A1;
 
 int PIDcontroller(int angle)
 {
+  //get data
+  int b = analogRead(forcePin2);
+  int t = analogRead(forcePin1);
+  int tthr = 500;
+  int bthr = 500;
+  if (t < tthr)
+    t = 0;
+  else //enough activation
+    t -= tthr;
+  if (b < bthr)
+    b = 0;
+  else //enough
+    b -= bthr;
+  //Serial.print(b); Serial.print("\t");  Serial.println(t);
+  
+  // PID
   int dScale;
   int pScale = 10;
-  int iScale = 1;
+  float iScale = .001;
   if (!PIDmode)
   {
+    digitalWrite(13,HIGH);
     dScale = 0;
     forceIntegral = 0;  //reset derivative and integral on first time
     PIDmode = 1;
@@ -49,11 +66,12 @@ int PIDcontroller(int angle)
   else
     dScale = 2;
 
-  int error = analogRead(forcePin1)-analogRead(forcePin2);
+  int error = b-t;
   //the thing we want to control. Outputs between -1024 and 1024.
+  //Serial.println(error);
   
   if(!(angle > (A_MAX - athr)) && !(angle < (A_MIN+athr)))  //doesn't update when near edge
-    forceIntegral += error/10; //update integral.
+    forceIntegral += ((float)error); //update integral.
   else
     forceIntegral = 0;   //no input from integral when near edge
 
@@ -70,7 +88,7 @@ int PIDcontroller(int angle)
 
 void setup()
 {
-  Serial.begin(9600);
+  Serial.begin(115200);
   pinMode(relayPin, OUTPUT);
   pinMode(dirPin1, OUTPUT);
   pinMode(dirPin2, OUTPUT);
@@ -85,7 +103,7 @@ void setup()
   digitalWrite(relayPin, LOW);
   analogWrite(DACPin, 0);
 
-  bool doCalibration = (bool)1; //so we can test without it if we want, default scale is 1
+  bool doCalibration = (bool)0; //so we can test without it if we want, default scale is 1
   if (doCalibration)
   {
     /* Finds the maximum bicep value over 3 seconds of flexing. Edits the globals bScale
@@ -239,27 +257,30 @@ void loop()
    *  it uses the PIController(). Outputs torque between 0 and 1024 and bool dir.
    *  dir is 0 for tricep and 1 for bicep
    */
-   int Bthr = 40, Tthr = 40; //thresholds, TODO: get this from calibration
+   int Bthr = 2000, Tthr = 2000; //thresholds, TODO: get this from calibration
    float sVal = 1.5;  //scale value, determines whether B and T are significantly far
    if (t > Tthr && t > sVal*b) //tricep activation
    {
       torque = t;
       dir = 0;
-      //Serial.println("Tricep!");
+      Serial.println("Tricep!");
+      digitalWrite(13, LOW);
    }
    else if (b > Bthr && b > sVal*t) //bicep activation
    {
       torque = b;
       dir = 1;
-      //Serial.println("Bicep!");
+      Serial.println("Bicep!");
+      digitalWrite(13, LOW);
    }
    else  //neither activated
    {
       //Serial.print(b);
-      //Serial.print("\t");
+      //Serial.print(" PID ");
       //Serial.println(t);
+      //Serial.println("PID");
       
-      torque =  0;//PIDcontroller(angle);
+      torque = PIDcontroller(angle);
       if (torque < 0)  //this because PIcontroller returns + or - for directions
       {
         torque = -torque;
@@ -269,6 +290,7 @@ void loop()
       {
         dir = 1;
       }
+      Serial.println(torque);
    }
    /******************************** Sanity Check ****************************\
    *  Makes sure torque can't go above 1024. Scales down torque near the max 
@@ -301,10 +323,9 @@ void loop()
    */
    if (torque <= 0)   //if zero torque
    {
-      digitalWrite(13, HIGH);
       analogWrite(DACPin, 0);
       digitalWrite(relayPin, LOW);  
-      delay(2);
+      delay(10);
       digitalWrite(dirPin1, LOW);
       digitalWrite(dirPin2, LOW);
    }
@@ -316,7 +337,7 @@ void loop()
         Serial.println(dir);
         digitalWrite(relayPin, LOW);
         analogWrite(DACPin, 0);
-        delay(2); //wait to make sure it's stopped
+        delay(10); //wait to make sure it's stopped
         lastDir = dir;
         digitalWrite(dirPin1, dir);  //send correct dir to dir pins
         digitalWrite(dirPin2, !dir);
@@ -327,11 +348,10 @@ void loop()
           digitalWrite(dirPin2, !dir);
       }
       digitalWrite(relayPin, HIGH); //turn on relay
-      torque = torque*2/3;  //scale for max 2.2V
+      torque = torque/3;  //scale for max 2.2V
       analogWrite(DACPin, torque);
-      Serial.print(dir);
-      Serial.print("\t");
-      Serial.println(torque);
+      //Serial.print(dir);  Serial.print("\t");   Serial.println(torque);
+      //delay(10);
    }
    /**********************************************************************/
 }
